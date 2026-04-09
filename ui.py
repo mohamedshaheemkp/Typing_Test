@@ -1,30 +1,9 @@
 import tkinter as tk
-from typing_logic import calculate_speed_accuracy, generate_text, start_timer, calculate_time_taken
+from typing_logic import calculate_speed_accuracy, generate_text, start_timer, calculate_time_taken, TypingState
 
 # ── Global state ──────────────────────────────────────────────────────────────
-start_time        = None
-best_speed        = 0
-sentence          = ""
-words             = []
-current_word_idx  = 0
-typed_words       = []
-mode              = "words"
-word_count        = 25
-
-# Time mode
-time_limit        = 60
-time_remaining    = 60
-timer_job         = None
-
-# Scrolling
-scroll_offset     = 0
-SCROLL_THRESHOLD  = 1
-
-# Rolling WPM smoothing
-# Each entry is (timestamp, word_index) recorded when a word is submitted.
-# update_stats() only counts words submitted in the last ROLLING_WINDOW seconds.
-word_timestamps   = []        # list of (time_float, word_idx) tuples
-ROLLING_WINDOW    = 5         # seconds to average over
+state = TypingState()
+best_speed = 0
 
 # ── Window ────────────────────────────────────────────────────────────────────
 window = tk.Tk()
@@ -47,8 +26,7 @@ mode_frame = tk.Frame(main_frame, bg="#323437")
 mode_frame.pack(pady=(0, 20))
 
 def set_mode(selected_mode):
-    global mode
-    mode = selected_mode
+    state.mode = selected_mode
     _refresh_sub_bar()
     restart_test()
 
@@ -66,13 +44,11 @@ word_frame = tk.Frame(sub_bar, bg="#323437")
 time_frame = tk.Frame(sub_bar, bg="#323437")
 
 def set_word_count(count):
-    global word_count
-    word_count = int(count)
+    state.word_count = int(count)
     restart_test()
 
 def set_time_limit(seconds):
-    global time_limit
-    time_limit = seconds
+    state.time_limit = seconds
     restart_test()
 
 for wc in ["10", "25", "50", "100"]:
@@ -92,9 +68,9 @@ for t in [15, 30, 60, 120]:
 def _refresh_sub_bar():
     word_frame.pack_forget()
     time_frame.pack_forget()
-    if mode == "words":
+    if state.is_words_mode():
         word_frame.pack()
-    elif mode == "time":
+    elif state.is_time_mode():
         time_frame.pack()
 
 word_frame.pack()   # default
@@ -270,9 +246,9 @@ def _paint_cursor(visible):
 def _cursor_tk_index():
     current_input = input_box.get("1.0", tk.END).strip()
     char_col = 0
-    for i in range(scroll_offset, len(words)):
-        word = words[i]
-        if i == current_word_idx:
+    for i in range(state.scroll_offset, len(state.words)):
+        word = state.words[i]
+        if i == state.current_word_idx:
             if not word:
                 return None
             typed_len = len(current_input)
@@ -283,78 +259,49 @@ def _cursor_tk_index():
 
 # ── Countdown ─────────────────────────────────────────────────────────────────
 def _start_countdown():
-    global time_remaining, timer_job
-    time_remaining = time_limit
-    timer_label.config(text=str(time_remaining))
+    state.start_countdown(state.time_limit, timer_label, calculate_final_result)
     _tick()
 
 def _tick():
-    global time_remaining, timer_job
-    if start_time is None:
+    if state.start_time is None:
         return
-    time_remaining -= 1
-    color = "#ff4757" if time_remaining <= 10 else "#e2b714"
-    timer_label.config(text=str(time_remaining), fg=color)
-    if time_remaining <= 0:
+    state.time_remaining -= 1
+    color = "#ff4757" if state.time_remaining <= 10 else "#e2b714"
+    timer_label.config(text=str(state.time_remaining), fg=color)
+    if state.time_remaining <= 0:
         calculate_final_result()
     else:
-        timer_job = window.after(1000, _tick)
+        state.timer_job = window.after(1000, _tick)
 
 def _cancel_countdown():
-    global timer_job
-    if timer_job is not None:
-        window.after_cancel(timer_job)
-        timer_job = None
+    state.cancel_countdown()
+    if state.timer_job is not None:
+        window.after_cancel(state.timer_job)
+        state.timer_job = None
 
 def _show_timer_label():
     timer_label.pack(side="left", padx=20)
-    timer_label.config(text=str(time_limit), fg="#e2b714")
+    timer_label.config(text=str(state.time_limit), fg="#e2b714")
 
 def _hide_timer_label():
     timer_label.pack_forget()
 
 # ── Scroll helpers ────────────────────────────────────────────────────────────
 def _build_line_start_words():
-    line_starts, prev_y, char_col = [], None, 0
-    for i in range(scroll_offset, len(words)):
-        try:
-            info = text_display.dlineinfo(f"1.{char_col}")
-        except Exception:
-            break
-        if info is None:
-            break
-        y = info[1]
-        if y != prev_y:
-            line_starts.append(i)
-            prev_y = y
-        char_col += len(words[i]) + 1
-    return line_starts
+    return state.build_line_start_words(text_display)
 
 def _check_and_scroll():
-    global scroll_offset
-    window.update_idletasks()
-    line_starts = _build_line_start_words()
-    if len(line_starts) < 2:
-        return
-    active_line_idx = None
-    for li, first_word in enumerate(line_starts):
-        next_first = line_starts[li + 1] if li + 1 < len(line_starts) else len(words) + 1
-        if first_word <= current_word_idx < next_first:
-            active_line_idx = li
-            break
-    if active_line_idx is not None and active_line_idx > SCROLL_THRESHOLD:
-        scroll_offset = line_starts[1]
-        _render_visible()
+    state.check_and_scroll(text_display, window, _render_visible)
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
 def _insert_completed_word(word_i):
-    word, typed = words[word_i], typed_words[word_i]
+    word, typed = state.words[word_i], state.typed_words[word_i]
     for c_i, ch in enumerate(word):
         tag = "correct" if c_i < len(typed) and typed[c_i] == ch else "incorrect"
         text_display.insert(tk.END, ch, tag)
 
 def _insert_active_word(current_input):
-    word = words[current_word_idx]
+    word = state.words[state.current_word_idx]
     for c_i, ch in enumerate(word):
         if c_i < len(current_input):
             text_display.insert(tk.END, ch,
@@ -368,14 +315,14 @@ def _render_visible():
     text_display.config(state="normal")
     text_display.delete("1.0", tk.END)
     current_input = input_box.get("1.0", tk.END).strip()
-    for word_i in range(scroll_offset, len(words)):
-        if word_i < len(typed_words):
+    for word_i in range(state.scroll_offset, len(state.words)):
+        if word_i < len(state.typed_words):
             _insert_completed_word(word_i)
-        elif word_i == current_word_idx:
+        elif word_i == state.current_word_idx:
             _insert_active_word(current_input)
         else:
-            text_display.insert(tk.END, words[word_i], "untyped")
-        if word_i < len(words) - 1:
+            text_display.insert(tk.END, state.words[word_i], "untyped")
+        if word_i < len(state.words) - 1:
             text_display.insert(tk.END, " ", "untyped")
     text_display.config(state="disabled")
     _paint_cursor(cursor_visible)
@@ -386,65 +333,33 @@ def update_text_display():
 
 # ── Stats update ──────────────────────────────────────────────────────────────
 def update_stats():
-    if start_time is None:
-        return
-
-    import time as _time
-    now        = _time.time()
-    time_taken = calculate_time_taken(start_time)
-    if time_taken < 0.1:
-        return
-
-    # ── Rolling WPM ───────────────────────────────────────────────────────────
-    # Keep only timestamps within the rolling window
-    cutoff = now - ROLLING_WINDOW
-    recent = [ts for ts in word_timestamps if ts[0] >= cutoff]
-
-    if len(recent) >= 2:
-        window_duration = recent[-1][0] - recent[0][0]
-        rolling_wpm = (len(recent) / window_duration) * 60 if window_duration > 0.1 else 0
-    elif len(recent) == 1 and time_taken >= 1:
-        # Single word typed — fall back to raw so display isn't stuck at 0
-        rolling_wpm = (1 / time_taken) * 60
-    else:
-        rolling_wpm = 0
-
-    # ── Accuracy (always full history) ────────────────────────────────────────
-    typed_text = " ".join(typed_words)
-    _, accuracy = calculate_speed_accuracy(sentence, typed_text, time_taken)
-
-    wpm_label.config(text=str(int(rolling_wpm)))
-    accuracy_label.config(text=str(int(accuracy)))
+    rolling_wpm, accuracy = state.update_stats(sentence)
+    wpm_label.config(text=str(rolling_wpm))
+    accuracy_label.config(text=str(accuracy))
 
 # ── Key handler ───────────────────────────────────────────────────────────────
 def on_key_press(event):
-    global start_time, current_word_idx, typed_words
-
     if event.keysym in ("Tab", "Return", "Escape"):
         restart_test()
         return "break"
 
-    if start_time is None:
-        start_time = start_timer()
-        if mode == "time":
+    if state.start_time is None:
+        state.start()
+        if state.is_time_mode():
             _start_countdown()
 
     current_input = input_box.get("1.0", tk.END).strip()
 
     if event.keysym == "space":
         if current_input:
-            typed_words.append(current_input)
-            current_word_idx = len(typed_words)
-            # Record the moment this word was completed for rolling WPM
-            import time as _time
-            word_timestamps.append((_time.time(), current_word_idx - 1))
+            state.complete_word(current_input)
 
-            if mode == "words" and current_word_idx >= len(words):
+            if state.is_words_mode() and state.current_word_idx >= len(state.words):
                 window.after(10, calculate_final_result)
                 return "break"
 
-            if mode == "time" and current_word_idx >= len(words) - 10:
-                _extend_words()
+            if state.is_time_mode() and state.current_word_idx >= len(state.words) - 10:
+                state.extend_words()
 
             input_box.delete("1.0", tk.END)
             update_text_display()
@@ -452,9 +367,8 @@ def on_key_press(event):
         return "break"
 
     elif event.keysym == "BackSpace":
-        if not current_input and typed_words:
-            prev = typed_words.pop()
-            current_word_idx = len(typed_words)
+        if not current_input and state.typed_words:
+            prev = state.undo_word()
             input_box.delete("1.0", tk.END)
             input_box.insert("1.0", prev)
         update_text_display()
@@ -470,36 +384,23 @@ def _after_keypress():
     update_stats()
 
 def _extend_words():
-    global sentence, words
-    extra  = generate_text(50)
-    sentence += " " + extra
-    words    += extra.split()
+    state.extend_words()
 
 # ── Restart ───────────────────────────────────────────────────────────────────
 def restart_test():
-    global start_time, current_word_idx, typed_words, sentence, words, \
-           scroll_offset, time_remaining, word_timestamps
+    global sentence
 
     _cancel_countdown()
     hide_results()
 
-    start_time       = None
-    current_word_idx = 0
-    typed_words      = []
-    scroll_offset    = 0
-    time_remaining   = time_limit
-    word_timestamps  = []
-
-    count    = 200 if mode == "time" else word_count
-    sentence = generate_text(count)
-    words    = sentence.split()
+    sentence = state.reset(state.mode, state.word_count, state.time_limit)
 
     wpm_label.config(text="0")
     accuracy_label.config(text="100")
 
-    if mode == "time":
+    if state.is_time_mode():
         _show_timer_label()
-        timer_label.config(text=str(time_limit), fg="#e2b714")
+        timer_label.config(text=str(state.time_limit), fg="#e2b714")
     else:
         _hide_timer_label()
 
@@ -510,18 +411,14 @@ def restart_test():
 
 # ── Final result ──────────────────────────────────────────────────────────────
 def calculate_final_result():
-    global start_time
-
     _cancel_countdown()
 
-    if start_time is None:
+    if state.start_time is None:
         return
 
-    time_taken      = calculate_time_taken(start_time)
-    typed_text      = " ".join(typed_words)
-    speed, accuracy = calculate_speed_accuracy(sentence, typed_text, time_taken)
+    speed, accuracy, time_taken = state.calculate_result(sentence)
 
-    start_time = None
+    state.start_time = None
     input_box.config(state="disabled")
 
     # Final result uses true average WPM (full test), not the rolling window
@@ -530,8 +427,7 @@ def calculate_final_result():
 # ── Bind & initialise ─────────────────────────────────────────────────────────
 input_box.bind("<Key>", on_key_press)
 
-sentence = generate_text(word_count)
-words    = sentence.split()
+sentence = state.reset()
 update_text_display()
 blink_cursor()
 
