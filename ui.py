@@ -2,14 +2,23 @@ import tkinter as tk
 from typing_logic import calculate_speed_accuracy, generate_text, start_timer, calculate_time_taken
 
 # ── Global state ──────────────────────────────────────────────────────────────
-start_time       = None
-best_speed       = 0
-sentence         = ""
-words            = []
-current_word_idx = 0   # index into words[]
-typed_words      = []  # list of completed (submitted) words
-mode             = "words"
-word_count       = 25
+start_time        = None
+best_speed        = 0
+sentence          = ""
+words             = []
+current_word_idx  = 0
+typed_words       = []
+mode              = "words"
+word_count        = 25
+
+# Time mode
+time_limit        = 60        # seconds for time mode
+time_remaining    = 60        # countdown value shown in UI
+timer_job         = None      # window.after job id for the countdown tick
+
+# Scrolling
+scroll_offset     = 0
+SCROLL_THRESHOLD  = 1
 
 # ── Window ────────────────────────────────────────────────────────────────────
 window = tk.Tk()
@@ -34,10 +43,8 @@ mode_frame.pack(pady=(0, 20))
 def set_mode(selected_mode):
     global mode
     mode = selected_mode
-    if mode == "words":
-        word_frame.pack(pady=(0, 30))
-    else:
-        word_frame.pack_forget()
+    _refresh_sub_bar()
+    restart_test()
 
 for m in ["time", "words", "quote", "zen", "custom"]:
     tk.Button(mode_frame, text=m, font=("Roboto", 12),
@@ -46,9 +53,12 @@ for m in ["time", "words", "quote", "zen", "custom"]:
               relief="flat", bd=0, padx=15, pady=5,
               command=lambda md=m: set_mode(md)).pack(side="left", padx=5)
 
-# ── Word-count buttons ────────────────────────────────────────────────────────
-word_frame = tk.Frame(main_frame, bg="#323437")
-word_frame.pack(pady=(0, 30))
+# ── Sub-bar (word count OR time selector) ────────────────────────────────────
+sub_bar = tk.Frame(main_frame, bg="#323437")
+sub_bar.pack(pady=(0, 30))
+
+# Word-count buttons (inside sub_bar)
+word_frame = tk.Frame(sub_bar, bg="#323437")
 
 def set_word_count(count):
     global word_count
@@ -61,6 +71,33 @@ for wc in ["10", "25", "50", "100"]:
               activebackground="#2c2e31", activeforeground="#d1d0c5",
               relief="flat", bd=0, padx=12, pady=3,
               command=lambda c=wc: set_word_count(c)).pack(side="left", padx=3)
+
+# Time-selector buttons (inside sub_bar)
+time_frame = tk.Frame(sub_bar, bg="#323437")
+
+def set_time_limit(seconds):
+    global time_limit
+    time_limit = seconds
+    restart_test()
+
+for t in [15, 30, 60, 120]:
+    tk.Button(time_frame, text=str(t), font=("Roboto", 12),
+              fg="#d1d0c5", bg="#323437",
+              activebackground="#2c2e31", activeforeground="#d1d0c5",
+              relief="flat", bd=0, padx=12, pady=3,
+              command=lambda s=t: set_time_limit(s)).pack(side="left", padx=3)
+
+def _refresh_sub_bar():
+    """Show the correct sub-bar for the current mode."""
+    word_frame.pack_forget()
+    time_frame.pack_forget()
+    if mode == "words":
+        word_frame.pack()
+    elif mode == "time":
+        time_frame.pack()
+
+# Default: words mode → show word_frame
+word_frame.pack()
 
 # ── Stats display ─────────────────────────────────────────────────────────────
 stats_frame = tk.Frame(main_frame, bg="#323437")
@@ -78,6 +115,13 @@ accuracy_label.pack(side="left", padx=20)
 tk.Label(stats_frame, text="%", font=("Roboto", 12),
          fg="#646669", bg="#323437").pack(side="left")
 
+# Time countdown label — only visible in time mode
+timer_label = tk.Label(stats_frame, text="", font=("Roboto", 24, "bold"),
+                        fg="#e2b714", bg="#323437")
+# (packed/unpacked dynamically)
+tk.Label(stats_frame, text="", font=("Roboto", 12),   # spacer
+         fg="#646669", bg="#323437").pack(side="left", padx=5)
+
 # ── Typing area ───────────────────────────────────────────────────────────────
 typing_frame = tk.Frame(main_frame, bg="#323437")
 typing_frame.pack(pady=(0, 30))
@@ -86,137 +130,171 @@ text_display = tk.Text(
     typing_frame, height=3, width=80,
     font=("Roboto Mono", 18), bg="#323437", fg="#d1d0c5",
     relief="flat", bd=0, wrap="word", state="disabled",
-    cursor="none"          # hide the text-widget's own cursor
+    cursor="none", spacing1=4, spacing3=4,
 )
 text_display.pack()
 
-# Hidden input box – invisible but captures keystrokes
 input_box = tk.Text(
     typing_frame, height=1, width=80,
     font=("Roboto Mono", 18), bg="#323437",
-    fg="#323437",           # same as bg → invisible text
-    insertbackground="#323437",  # invisible caret
+    fg="#323437", insertbackground="#323437",
     relief="flat", bd=0
 )
 input_box.pack()
 input_box.focus_set()
 
 # ── Text tags ─────────────────────────────────────────────────────────────────
-text_display.tag_configure("correct",   foreground="#d1d0c5")   # typed correctly → white
-text_display.tag_configure("incorrect", foreground="#ff4757",
-                            background="#3d1f24")               # wrong char → red + tint
-text_display.tag_configure("cursor",    foreground="#d1d0c5",
-                            background="#e2b714")               # current char → yellow bg
-text_display.tag_configure("untyped",   foreground="#646669")   # not yet reached → grey
-text_display.tag_configure("extra",     foreground="#ff4757",
-                            background="#3d1f24")               # extra chars beyond word → red
+text_display.tag_configure("correct",   foreground="#d1d0c5")
+text_display.tag_configure("incorrect", foreground="#ff4757", background="#3d1f24")
+text_display.tag_configure("cursor",    foreground="#232628", background="#e2b714")
+text_display.tag_configure("untyped",   foreground="#646669")
+text_display.tag_configure("extra",     foreground="#ff4757", background="#3d1f24",
+                            underline=True)
 
-# ── Cursor blink state ────────────────────────────────────────────────────────
-cursor_visible = True
+# ── Cursor blink ──────────────────────────────────────────────────────────────
+cursor_visible   = True
 cursor_blink_job = None
 
 def blink_cursor():
-    """Toggle the cursor highlight on the current character every 530 ms."""
     global cursor_visible, cursor_blink_job
-    if start_time is None and len(typed_words) == 0:
-        # not started yet – always show cursor
-        _paint_cursor(True)
-        cursor_blink_job = window.after(530, blink_cursor)
-        return
     cursor_visible = not cursor_visible
     _paint_cursor(cursor_visible)
     cursor_blink_job = window.after(530, blink_cursor)
 
 def _paint_cursor(visible):
-    """Add or remove the cursor highlight without redrawing everything."""
     text_display.tag_remove("cursor", "1.0", tk.END)
     if not visible:
         return
-    pos = _cursor_position()
-    if pos is not None:
+    pos = _cursor_tk_index()
+    if pos:
         text_display.tag_add("cursor", pos, f"{pos}+1c")
 
-def _cursor_position():
-    """
-    Return the tkinter index of the character the cursor sits ON.
-    The cursor sits on the next character to be typed inside current_word_idx.
-    """
-    char_offset = 0
-    current_typed_in_word = input_box.get("1.0", tk.END).strip()
-
-    for i, word in enumerate(words):
+def _cursor_tk_index():
+    current_input = input_box.get("1.0", tk.END).strip()
+    char_col = 0
+    for i in range(scroll_offset, len(words)):
+        word = words[i]
         if i == current_word_idx:
-            # cursor lives at char_offset + len(already typed in this word)
-            col = char_offset + len(current_typed_in_word)
-            # clamp to end of word (for over-type)
-            col = min(col, char_offset + len(word))
-            line = 1
-            return f"{line}.{col}"
-        char_offset += len(word) + 1  # +1 for the space
+            if len(word) == 0:
+                return None
+            typed_len = len(current_input)
+            col = char_col + (min(typed_len, len(word) - 1) if typed_len >= len(word) else typed_len)
+            return f"1.{col}"
+        char_col += len(word) + 1
     return None
 
-# ── Core display update ───────────────────────────────────────────────────────
-def update_text_display():
-    """
-    Rebuild the full character-level display.
+# ── Countdown timer ───────────────────────────────────────────────────────────
+def _start_countdown():
+    """Begin the per-second countdown tick. Called on first keypress in time mode."""
+    global time_remaining, timer_job
+    time_remaining = time_limit
+    timer_label.config(text=str(time_remaining))
+    _tick()
 
-    For completed words (typed_words):
-        each character is tagged correct / incorrect / extra.
-    For the active word (current_word_idx):
-        typed portion → correct / incorrect, remainder → untyped.
-    For future words:
-        all characters → untyped.
-    Spaces between words are always untyped.
-    """
+def _tick():
+    """Decrement the countdown by 1 every second."""
+    global time_remaining, timer_job
+    if start_time is None:
+        return   # test was restarted mid-tick
+    time_remaining -= 1
+    timer_label.config(text=str(time_remaining))
+    if time_remaining <= 0:
+        calculate_final_result()
+    else:
+        # Turn red in last 10 seconds
+        color = "#ff4757" if time_remaining <= 10 else "#e2b714"
+        timer_label.config(fg=color)
+        timer_job = window.after(1000, _tick)
+
+def _cancel_countdown():
+    global timer_job
+    if timer_job is not None:
+        window.try_cancel = True
+        window.after_cancel(timer_job)
+        timer_job = None
+
+def _show_timer_label():
+    timer_label.pack(side="left", padx=20)
+    timer_label.config(text=str(time_limit), fg="#e2b714")
+
+def _hide_timer_label():
+    timer_label.pack_forget()
+
+# ── Scroll helpers ────────────────────────────────────────────────────────────
+def _build_line_start_words():
+    line_starts = []
+    prev_y      = None
+    char_col    = 0
+    for i in range(scroll_offset, len(words)):
+        try:
+            info = text_display.dlineinfo(f"1.{char_col}")
+        except Exception:
+            break
+        if info is None:
+            break
+        y = info[1]
+        if y != prev_y:
+            line_starts.append(i)
+            prev_y = y
+        char_col += len(words[i]) + 1
+    return line_starts
+
+def _check_and_scroll():
+    global scroll_offset
+    window.update_idletasks()
+    line_starts = _build_line_start_words()
+    if len(line_starts) < 2:
+        return
+    active_line_idx = None
+    for li, first_word in enumerate(line_starts):
+        next_first = line_starts[li + 1] if li + 1 < len(line_starts) else len(words) + 1
+        if first_word <= current_word_idx < next_first:
+            active_line_idx = li
+            break
+    if active_line_idx is None:
+        return
+    if active_line_idx > SCROLL_THRESHOLD:
+        scroll_offset = line_starts[1]
+        _render_visible()
+
+# ── Rendering ─────────────────────────────────────────────────────────────────
+def _insert_completed_word(word_i):
+    word  = words[word_i]
+    typed = typed_words[word_i]
+    for c_i, ch in enumerate(word):
+        tag = "correct" if c_i < len(typed) and typed[c_i] == ch else "incorrect"
+        text_display.insert(tk.END, ch, tag)
+
+def _insert_active_word(current_input):
+    word = words[current_word_idx]
+    for c_i, ch in enumerate(word):
+        if c_i < len(current_input):
+            tag = "correct" if current_input[c_i] == ch else "incorrect"
+            text_display.insert(tk.END, ch, tag)
+        else:
+            text_display.insert(tk.END, ch, "untyped")
+    if len(current_input) > len(word):
+        text_display.insert(tk.END, current_input[len(word):], "extra")
+
+def _render_visible():
     text_display.config(state="normal")
     text_display.delete("1.0", tk.END)
-
     current_input = input_box.get("1.0", tk.END).strip()
-
-    for word_i, word in enumerate(words):
-
+    for word_i in range(scroll_offset, len(words)):
         if word_i < len(typed_words):
-            # ── Completed word ────────────────────────────────────────────────
-            typed = typed_words[word_i]
-            max_len = max(len(word), len(typed))
-
-            for c_i in range(max_len):
-                if c_i < len(word) and c_i < len(typed):
-                    tag = "correct" if typed[c_i] == word[c_i] else "incorrect"
-                    text_display.insert(tk.END, word[c_i], tag)
-                elif c_i < len(word):
-                    # character in word but not typed (shouldn't happen after submit, but safe)
-                    text_display.insert(tk.END, word[c_i], "incorrect")
-                else:
-                    # extra character typed beyond word length → show as red underline
-                    # we show the typed extra char (but word is shorter, so display word char if exists)
-                    pass  # extra chars are silently dropped in display; word boundary is fixed
-
+            _insert_completed_word(word_i)
         elif word_i == current_word_idx:
-            # ── Active word ───────────────────────────────────────────────────
-            for c_i, ch in enumerate(word):
-                if c_i < len(current_input):
-                    tag = "correct" if current_input[c_i] == ch else "incorrect"
-                    text_display.insert(tk.END, ch, tag)
-                else:
-                    text_display.insert(tk.END, ch, "untyped")
-
-            # Extra characters typed beyond the word
-            if len(current_input) > len(word):
-                extra = current_input[len(word):]
-                text_display.insert(tk.END, extra, "extra")
-
+            _insert_active_word(current_input)
         else:
-            # ── Future word ───────────────────────────────────────────────────
-            text_display.insert(tk.END, word, "untyped")
-
-        # Space between words
+            text_display.insert(tk.END, words[word_i], "untyped")
         if word_i < len(words) - 1:
             text_display.insert(tk.END, " ", "untyped")
-
     text_display.config(state="disabled")
-    # Repaint cursor immediately after redraw
     _paint_cursor(cursor_visible)
+
+def update_text_display():
+    _render_visible()
+    window.after(10, _check_and_scroll)
 
 # ── Stats update ──────────────────────────────────────────────────────────────
 def update_stats():
@@ -234,32 +312,39 @@ def update_stats():
 def on_key_press(event):
     global start_time, current_word_idx, typed_words
 
-    # Start timer on first keystroke
-    if start_time is None and event.keysym not in ("Tab", "Return", "Escape"):
+    if event.keysym in ("Tab", "Return", "Escape"):
+        restart_test()
+        return "break"
+
+    # First keypress: start timer
+    if start_time is None:
         start_time = start_timer()
+        if mode == "time":
+            _start_countdown()
 
     current_input = input_box.get("1.0", tk.END).strip()
 
     if event.keysym == "space":
-        # ── Space: submit current word ────────────────────────────────────────
-        if current_input:  # only if something was typed
+        if current_input:
             typed_words.append(current_input)
             current_word_idx = len(typed_words)
 
-            if current_word_idx >= len(words):
+            # In words mode: end when all words done
+            if mode == "words" and current_word_idx >= len(words):
                 window.after(10, calculate_final_result)
                 return "break"
 
-            # Clear input box for next word
+            # In time mode: generate more words if running low
+            if mode == "time" and current_word_idx >= len(words) - 10:
+                _extend_words()
+
             input_box.delete("1.0", tk.END)
             update_text_display()
             update_stats()
-        return "break"   # always swallow space so it doesn't appear in input_box
+        return "break"
 
     elif event.keysym == "BackSpace":
-        # ── Backspace: allow going back to previous word if input is empty ────
         if not current_input and typed_words:
-            # Restore previous word into input box
             prev = typed_words.pop()
             current_word_idx = len(typed_words)
             input_box.delete("1.0", tk.END)
@@ -267,38 +352,49 @@ def on_key_press(event):
         update_text_display()
         update_stats()
 
-    elif event.keysym in ("Tab", "Return"):
-        # ── Tab / Enter: restart ──────────────────────────────────────────────
-        restart_test()
-        return "break"
-
-    elif event.keysym == "Escape":
-        restart_test()
-        return "break"
-
     else:
-        # Regular character – let tkinter insert it, then refresh display
         window.after(1, _after_keypress)
 
     update_stats()
 
 def _after_keypress():
-    """Called 1 ms after a regular keypress so the char is already in input_box."""
-    update_text_display()
+    _render_visible()
     update_stats()
+
+def _extend_words():
+    """Append more words to the sentence/words list so time mode never runs dry."""
+    global sentence, words
+    extra = generate_text(50)
+    sentence += " " + extra
+    words    += extra.split()
 
 # ── Restart ───────────────────────────────────────────────────────────────────
 def restart_test():
-    global start_time, current_word_idx, typed_words, sentence, words
+    global start_time, current_word_idx, typed_words, sentence, words, scroll_offset, time_remaining
+
+    _cancel_countdown()
 
     start_time       = None
     current_word_idx = 0
     typed_words      = []
-    sentence         = generate_text(word_count)
-    words            = sentence.split()
+    scroll_offset    = 0
+    time_remaining   = time_limit
+
+    # Generate enough words
+    count = 200 if mode == "time" else word_count
+    sentence = generate_text(count)
+    words    = sentence.split()
 
     wpm_label.config(text="0")
     accuracy_label.config(text="100")
+
+    # Show/hide timer label
+    if mode == "time":
+        _show_timer_label()
+        timer_label.config(text=str(time_limit), fg="#e2b714")
+    else:
+        _hide_timer_label()
+
     input_box.config(state="normal")
     input_box.delete("1.0", tk.END)
     update_text_display()
@@ -308,11 +404,13 @@ def restart_test():
 def calculate_final_result():
     global best_speed, start_time
 
+    _cancel_countdown()
+
     if start_time is None:
         return
 
-    time_taken  = calculate_time_taken(start_time)
-    typed_text  = " ".join(typed_words)
+    time_taken      = calculate_time_taken(start_time)
+    typed_text      = " ".join(typed_words)
     speed, accuracy = calculate_speed_accuracy(sentence, typed_text, time_taken)
 
     if speed > best_speed:
@@ -323,7 +421,7 @@ def calculate_final_result():
     input_box.config(state="disabled")
 
     text_display.config(state="normal")
-    text_display.insert(tk.END, "\n\nTest complete! Tab or Restart to go again.", "untyped")
+    text_display.insert(tk.END, "\n\nTest complete! Tab or Restart to try again.", "untyped")
     text_display.config(state="disabled")
 
     start_time = None
@@ -335,13 +433,12 @@ tk.Button(main_frame, text="restart", font=("Roboto", 12),
           relief="flat", bd=0, padx=15, pady=8,
           command=restart_test).pack()
 
-# ── Bind events ───────────────────────────────────────────────────────────────
+# ── Bind & initialise ─────────────────────────────────────────────────────────
 input_box.bind("<Key>", on_key_press)
 
-# ── Initialise ────────────────────────────────────────────────────────────────
 sentence = generate_text(word_count)
 words    = sentence.split()
 update_text_display()
-blink_cursor()   # start the blink loop
+blink_cursor()
 
 window.mainloop()
