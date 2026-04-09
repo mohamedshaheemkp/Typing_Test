@@ -20,9 +20,15 @@ timer_job         = None
 scroll_offset     = 0
 SCROLL_THRESHOLD  = 1
 
+# Rolling WPM smoothing
+# Each entry is (timestamp, word_index) recorded when a word is submitted.
+# update_stats() only counts words submitted in the last ROLLING_WINDOW seconds.
+word_timestamps   = []        # list of (time_float, word_idx) tuples
+ROLLING_WINDOW    = 5         # seconds to average over
+
 # ── Window ────────────────────────────────────────────────────────────────────
 window = tk.Tk()
-window.title("monkeytype")
+window.title("Typing Test")
 window.geometry("1200x700")
 window.configure(bg="#323437")
 window.resizable(False, False)
@@ -33,7 +39,7 @@ main_frame.pack(expand=True, fill="both")
 # ── Header ────────────────────────────────────────────────────────────────────
 header = tk.Frame(main_frame, bg="#323437")
 header.pack(pady=(40, 20))
-tk.Label(header, text="monkeytype", font=("Roboto", 16),
+tk.Label(header, text="Typing Test", font=("Roboto", 16),
          fg="#d1d0c5", bg="#323437").pack()
 
 # ── Mode buttons ──────────────────────────────────────────────────────────────
@@ -382,12 +388,32 @@ def update_text_display():
 def update_stats():
     if start_time is None:
         return
+
+    import time as _time
+    now        = _time.time()
     time_taken = calculate_time_taken(start_time)
     if time_taken < 0.1:
         return
+
+    # ── Rolling WPM ───────────────────────────────────────────────────────────
+    # Keep only timestamps within the rolling window
+    cutoff = now - ROLLING_WINDOW
+    recent = [ts for ts in word_timestamps if ts[0] >= cutoff]
+
+    if len(recent) >= 2:
+        window_duration = recent[-1][0] - recent[0][0]
+        rolling_wpm = (len(recent) / window_duration) * 60 if window_duration > 0.1 else 0
+    elif len(recent) == 1 and time_taken >= 1:
+        # Single word typed — fall back to raw so display isn't stuck at 0
+        rolling_wpm = (1 / time_taken) * 60
+    else:
+        rolling_wpm = 0
+
+    # ── Accuracy (always full history) ────────────────────────────────────────
     typed_text = " ".join(typed_words)
-    speed, accuracy = calculate_speed_accuracy(sentence, typed_text, time_taken)
-    wpm_label.config(text=str(int(speed)))
+    _, accuracy = calculate_speed_accuracy(sentence, typed_text, time_taken)
+
+    wpm_label.config(text=str(int(rolling_wpm)))
     accuracy_label.config(text=str(int(accuracy)))
 
 # ── Key handler ───────────────────────────────────────────────────────────────
@@ -409,6 +435,9 @@ def on_key_press(event):
         if current_input:
             typed_words.append(current_input)
             current_word_idx = len(typed_words)
+            # Record the moment this word was completed for rolling WPM
+            import time as _time
+            word_timestamps.append((_time.time(), current_word_idx - 1))
 
             if mode == "words" and current_word_idx >= len(words):
                 window.after(10, calculate_final_result)
@@ -449,7 +478,7 @@ def _extend_words():
 # ── Restart ───────────────────────────────────────────────────────────────────
 def restart_test():
     global start_time, current_word_idx, typed_words, sentence, words, \
-           scroll_offset, time_remaining
+           scroll_offset, time_remaining, word_timestamps
 
     _cancel_countdown()
     hide_results()
@@ -459,6 +488,7 @@ def restart_test():
     typed_words      = []
     scroll_offset    = 0
     time_remaining   = time_limit
+    word_timestamps  = []
 
     count    = 200 if mode == "time" else word_count
     sentence = generate_text(count)
@@ -494,7 +524,7 @@ def calculate_final_result():
     start_time = None
     input_box.config(state="disabled")
 
-    # Hand off to results overlay
+    # Final result uses true average WPM (full test), not the rolling window
     show_results(speed, accuracy, time_taken)
 
 # ── Bind & initialise ─────────────────────────────────────────────────────────
