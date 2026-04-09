@@ -1,4 +1,5 @@
 import random
+import time
 
 sentences = [
     "Python makes automation easy",
@@ -10,6 +11,13 @@ sentences = [
 
 def get_random_sentence():
     return random.choice(sentences)
+
+def generate_text(word_count):
+    """Generate text with specified number of words"""
+    words = []
+    while len(words) < word_count:
+        words.extend(get_random_sentence().split())
+    return " ".join(words[:word_count])
     
 def calculate_speed_accuracy(sentence, typed, time_taken):
     words = len(typed.split())
@@ -23,6 +31,14 @@ def calculate_speed_accuracy(sentence, typed, time_taken):
         if original_words[i] == typed_words[i]:
             correct_words += 1
 
-    accuracy = (correct_words / len(original_words)) * 100
+    accuracy = (correct_words / len(original_words)) * 100 if len(original_words) > 0 else 0
 
     return speed, accuracy
+
+def start_timer():
+    """Start the typing timer"""
+    return time.time()
+
+def calculate_time_taken(start_time):
+    """Calculate elapsed time since timer started"""
+    return time.time() - start_time
