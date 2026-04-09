@@ -12,9 +12,9 @@ mode              = "words"
 word_count        = 25
 
 # Time mode
-time_limit        = 60        # seconds for time mode
-time_remaining    = 60        # countdown value shown in UI
-timer_job         = None      # window.after job id for the countdown tick
+time_limit        = 60
+time_remaining    = 60
+timer_job         = None
 
 # Scrolling
 scroll_offset     = 0
@@ -53,16 +53,20 @@ for m in ["time", "words", "quote", "zen", "custom"]:
               relief="flat", bd=0, padx=15, pady=5,
               command=lambda md=m: set_mode(md)).pack(side="left", padx=5)
 
-# ── Sub-bar (word count OR time selector) ────────────────────────────────────
-sub_bar = tk.Frame(main_frame, bg="#323437")
+# ── Sub-bar ───────────────────────────────────────────────────────────────────
+sub_bar    = tk.Frame(main_frame, bg="#323437")
 sub_bar.pack(pady=(0, 30))
-
-# Word-count buttons (inside sub_bar)
 word_frame = tk.Frame(sub_bar, bg="#323437")
+time_frame = tk.Frame(sub_bar, bg="#323437")
 
 def set_word_count(count):
     global word_count
     word_count = int(count)
+    restart_test()
+
+def set_time_limit(seconds):
+    global time_limit
+    time_limit = seconds
     restart_test()
 
 for wc in ["10", "25", "50", "100"]:
@@ -72,14 +76,6 @@ for wc in ["10", "25", "50", "100"]:
               relief="flat", bd=0, padx=12, pady=3,
               command=lambda c=wc: set_word_count(c)).pack(side="left", padx=3)
 
-# Time-selector buttons (inside sub_bar)
-time_frame = tk.Frame(sub_bar, bg="#323437")
-
-def set_time_limit(seconds):
-    global time_limit
-    time_limit = seconds
-    restart_test()
-
 for t in [15, 30, 60, 120]:
     tk.Button(time_frame, text=str(t), font=("Roboto", 12),
               fg="#d1d0c5", bg="#323437",
@@ -88,7 +84,6 @@ for t in [15, 30, 60, 120]:
               command=lambda s=t: set_time_limit(s)).pack(side="left", padx=3)
 
 def _refresh_sub_bar():
-    """Show the correct sub-bar for the current mode."""
     word_frame.pack_forget()
     time_frame.pack_forget()
     if mode == "words":
@@ -96,10 +91,9 @@ def _refresh_sub_bar():
     elif mode == "time":
         time_frame.pack()
 
-# Default: words mode → show word_frame
-word_frame.pack()
+word_frame.pack()   # default
 
-# ── Stats display ─────────────────────────────────────────────────────────────
+# ── Stats bar ─────────────────────────────────────────────────────────────────
 stats_frame = tk.Frame(main_frame, bg="#323437")
 stats_frame.pack(pady=(0, 20))
 
@@ -115,12 +109,8 @@ accuracy_label.pack(side="left", padx=20)
 tk.Label(stats_frame, text="%", font=("Roboto", 12),
          fg="#646669", bg="#323437").pack(side="left")
 
-# Time countdown label — only visible in time mode
 timer_label = tk.Label(stats_frame, text="", font=("Roboto", 24, "bold"),
                         fg="#e2b714", bg="#323437")
-# (packed/unpacked dynamically)
-tk.Label(stats_frame, text="", font=("Roboto", 12),   # spacer
-         fg="#646669", bg="#323437").pack(side="left", padx=5)
 
 # ── Typing area ───────────────────────────────────────────────────────────────
 typing_frame = tk.Frame(main_frame, bg="#323437")
@@ -151,6 +141,108 @@ text_display.tag_configure("untyped",   foreground="#646669")
 text_display.tag_configure("extra",     foreground="#ff4757", background="#3d1f24",
                             underline=True)
 
+# ── Restart button ────────────────────────────────────────────────────────────
+restart_btn = tk.Button(main_frame, text="restart", font=("Roboto", 12),
+                         fg="#d1d0c5", bg="#323437",
+                         activebackground="#2c2e31", activeforeground="#d1d0c5",
+                         relief="flat", bd=0, padx=15, pady=8,
+                         command=lambda: restart_test())
+restart_btn.pack()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RESULTS OVERLAY
+# ══════════════════════════════════════════════════════════════════════════════
+results_frame = tk.Frame(window, bg="#323437")
+# (not packed until test ends)
+
+# ── Large WPM display ─────────────────────────────────────────────────────────
+res_top = tk.Frame(results_frame, bg="#323437")
+res_top.pack(pady=(60, 10))
+
+tk.Label(res_top, text="wpm", font=("Roboto", 13),
+         fg="#646669", bg="#323437").grid(row=0, column=0, padx=40)
+tk.Label(res_top, text="acc", font=("Roboto", 13),
+         fg="#646669", bg="#323437").grid(row=0, column=1, padx=40)
+tk.Label(res_top, text="time", font=("Roboto", 13),
+         fg="#646669", bg="#323437").grid(row=0, column=2, padx=40)
+tk.Label(res_top, text="best", font=("Roboto", 13),
+         fg="#646669", bg="#323437").grid(row=0, column=3, padx=40)
+
+res_wpm_val  = tk.Label(res_top, text="0",  font=("Roboto", 64, "bold"),
+                         fg="#e2b714", bg="#323437")
+res_wpm_val.grid(row=1, column=0, padx=40)
+
+res_acc_val  = tk.Label(res_top, text="0%", font=("Roboto", 64, "bold"),
+                         fg="#d1d0c5", bg="#323437")
+res_acc_val.grid(row=1, column=1, padx=40)
+
+res_time_val = tk.Label(res_top, text="0s", font=("Roboto", 64, "bold"),
+                         fg="#d1d0c5", bg="#323437")
+res_time_val.grid(row=1, column=2, padx=40)
+
+res_best_val = tk.Label(res_top, text="0",  font=("Roboto", 64, "bold"),
+                         fg="#d1d0c5", bg="#323437")
+res_best_val.grid(row=1, column=3, padx=40)
+
+# ── Divider ───────────────────────────────────────────────────────────────────
+tk.Frame(results_frame, bg="#2c2e31", height=2, width=700).pack(pady=30)
+
+# ── Restart prompt ────────────────────────────────────────────────────────────
+res_bottom = tk.Frame(results_frame, bg="#323437")
+res_bottom.pack(pady=10)
+
+tk.Button(res_bottom, text="restart",
+          font=("Roboto", 14),
+          fg="#d1d0c5", bg="#2c2e31",
+          activebackground="#646669", activeforeground="#d1d0c5",
+          relief="flat", bd=0, padx=24, pady=10,
+          command=lambda: restart_test()).pack(side="left", padx=15)
+
+tk.Label(res_bottom, text="or press  Tab",
+         font=("Roboto", 12), fg="#646669", bg="#323437").pack(side="left")
+
+# ── New-best banner ───────────────────────────────────────────────────────────
+res_newbest = tk.Label(results_frame, text="🏆  New best!",
+                        font=("Roboto", 14, "bold"),
+                        fg="#e2b714", bg="#323437")
+# (packed only when new best is achieved)
+
+def show_results(speed, accuracy, time_taken):
+    """Hide the typing UI and show the results overlay."""
+    global best_speed
+
+    is_new_best = speed > best_speed
+    if is_new_best:
+        best_speed = speed
+
+    # Fill in values
+    res_wpm_val.config(text=str(int(speed)))
+    res_acc_val.config(text=f"{int(accuracy)}%")
+    res_time_val.config(text=f"{int(time_taken)}s")
+    res_best_val.config(text=str(int(best_speed)),
+                        fg="#e2b714" if is_new_best else "#d1d0c5")
+
+    if is_new_best:
+        res_newbest.pack(pady=(0, 10))
+    else:
+        res_newbest.pack_forget()
+
+    # Swap frames
+    main_frame.pack_forget()
+    results_frame.pack(expand=True, fill="both")
+
+    # Bind Tab on the results frame too
+    window.bind("<Tab>",    lambda e: restart_test())
+    window.bind("<Return>", lambda e: restart_test())
+    window.bind("<Escape>", lambda e: restart_test())
+
+def hide_results():
+    results_frame.pack_forget()
+    main_frame.pack(expand=True, fill="both")
+    window.unbind("<Tab>")
+    window.unbind("<Return>")
+    window.unbind("<Escape>")
+
 # ── Cursor blink ──────────────────────────────────────────────────────────────
 cursor_visible   = True
 cursor_blink_job = None
@@ -175,7 +267,7 @@ def _cursor_tk_index():
     for i in range(scroll_offset, len(words)):
         word = words[i]
         if i == current_word_idx:
-            if len(word) == 0:
+            if not word:
                 return None
             typed_len = len(current_input)
             col = char_col + (min(typed_len, len(word) - 1) if typed_len >= len(word) else typed_len)
@@ -183,33 +275,28 @@ def _cursor_tk_index():
         char_col += len(word) + 1
     return None
 
-# ── Countdown timer ───────────────────────────────────────────────────────────
+# ── Countdown ─────────────────────────────────────────────────────────────────
 def _start_countdown():
-    """Begin the per-second countdown tick. Called on first keypress in time mode."""
     global time_remaining, timer_job
     time_remaining = time_limit
     timer_label.config(text=str(time_remaining))
     _tick()
 
 def _tick():
-    """Decrement the countdown by 1 every second."""
     global time_remaining, timer_job
     if start_time is None:
-        return   # test was restarted mid-tick
+        return
     time_remaining -= 1
-    timer_label.config(text=str(time_remaining))
+    color = "#ff4757" if time_remaining <= 10 else "#e2b714"
+    timer_label.config(text=str(time_remaining), fg=color)
     if time_remaining <= 0:
         calculate_final_result()
     else:
-        # Turn red in last 10 seconds
-        color = "#ff4757" if time_remaining <= 10 else "#e2b714"
-        timer_label.config(fg=color)
         timer_job = window.after(1000, _tick)
 
 def _cancel_countdown():
     global timer_job
     if timer_job is not None:
-        window.try_cancel = True
         window.after_cancel(timer_job)
         timer_job = None
 
@@ -222,9 +309,7 @@ def _hide_timer_label():
 
 # ── Scroll helpers ────────────────────────────────────────────────────────────
 def _build_line_start_words():
-    line_starts = []
-    prev_y      = None
-    char_col    = 0
+    line_starts, prev_y, char_col = [], None, 0
     for i in range(scroll_offset, len(words)):
         try:
             info = text_display.dlineinfo(f"1.{char_col}")
@@ -251,16 +336,13 @@ def _check_and_scroll():
         if first_word <= current_word_idx < next_first:
             active_line_idx = li
             break
-    if active_line_idx is None:
-        return
-    if active_line_idx > SCROLL_THRESHOLD:
+    if active_line_idx is not None and active_line_idx > SCROLL_THRESHOLD:
         scroll_offset = line_starts[1]
         _render_visible()
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
 def _insert_completed_word(word_i):
-    word  = words[word_i]
-    typed = typed_words[word_i]
+    word, typed = words[word_i], typed_words[word_i]
     for c_i, ch in enumerate(word):
         tag = "correct" if c_i < len(typed) and typed[c_i] == ch else "incorrect"
         text_display.insert(tk.END, ch, tag)
@@ -269,8 +351,8 @@ def _insert_active_word(current_input):
     word = words[current_word_idx]
     for c_i, ch in enumerate(word):
         if c_i < len(current_input):
-            tag = "correct" if current_input[c_i] == ch else "incorrect"
-            text_display.insert(tk.END, ch, tag)
+            text_display.insert(tk.END, ch,
+                                "correct" if current_input[c_i] == ch else "incorrect")
         else:
             text_display.insert(tk.END, ch, "untyped")
     if len(current_input) > len(word):
@@ -316,7 +398,6 @@ def on_key_press(event):
         restart_test()
         return "break"
 
-    # First keypress: start timer
     if start_time is None:
         start_time = start_timer()
         if mode == "time":
@@ -329,12 +410,10 @@ def on_key_press(event):
             typed_words.append(current_input)
             current_word_idx = len(typed_words)
 
-            # In words mode: end when all words done
             if mode == "words" and current_word_idx >= len(words):
                 window.after(10, calculate_final_result)
                 return "break"
 
-            # In time mode: generate more words if running low
             if mode == "time" and current_word_idx >= len(words) - 10:
                 _extend_words()
 
@@ -362,17 +441,18 @@ def _after_keypress():
     update_stats()
 
 def _extend_words():
-    """Append more words to the sentence/words list so time mode never runs dry."""
     global sentence, words
-    extra = generate_text(50)
+    extra  = generate_text(50)
     sentence += " " + extra
     words    += extra.split()
 
 # ── Restart ───────────────────────────────────────────────────────────────────
 def restart_test():
-    global start_time, current_word_idx, typed_words, sentence, words, scroll_offset, time_remaining
+    global start_time, current_word_idx, typed_words, sentence, words, \
+           scroll_offset, time_remaining
 
     _cancel_countdown()
+    hide_results()
 
     start_time       = None
     current_word_idx = 0
@@ -380,15 +460,13 @@ def restart_test():
     scroll_offset    = 0
     time_remaining   = time_limit
 
-    # Generate enough words
-    count = 200 if mode == "time" else word_count
+    count    = 200 if mode == "time" else word_count
     sentence = generate_text(count)
     words    = sentence.split()
 
     wpm_label.config(text="0")
     accuracy_label.config(text="100")
 
-    # Show/hide timer label
     if mode == "time":
         _show_timer_label()
         timer_label.config(text=str(time_limit), fg="#e2b714")
@@ -402,7 +480,7 @@ def restart_test():
 
 # ── Final result ──────────────────────────────────────────────────────────────
 def calculate_final_result():
-    global best_speed, start_time
+    global start_time
 
     _cancel_countdown()
 
@@ -413,25 +491,11 @@ def calculate_final_result():
     typed_text      = " ".join(typed_words)
     speed, accuracy = calculate_speed_accuracy(sentence, typed_text, time_taken)
 
-    if speed > best_speed:
-        best_speed = speed
-
-    wpm_label.config(text=str(int(speed)))
-    accuracy_label.config(text=str(int(accuracy)))
+    start_time = None
     input_box.config(state="disabled")
 
-    text_display.config(state="normal")
-    text_display.insert(tk.END, "\n\nTest complete! Tab or Restart to try again.", "untyped")
-    text_display.config(state="disabled")
-
-    start_time = None
-
-# ── Restart button ────────────────────────────────────────────────────────────
-tk.Button(main_frame, text="restart", font=("Roboto", 12),
-          fg="#d1d0c5", bg="#323437",
-          activebackground="#2c2e31", activeforeground="#d1d0c5",
-          relief="flat", bd=0, padx=15, pady=8,
-          command=restart_test).pack()
+    # Hand off to results overlay
+    show_results(speed, accuracy, time_taken)
 
 # ── Bind & initialise ─────────────────────────────────────────────────────────
 input_box.bind("<Key>", on_key_press)
